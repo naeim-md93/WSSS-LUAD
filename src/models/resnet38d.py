@@ -316,9 +316,10 @@ class ResNet38(nn.Module):
             dilation_padding=4,
             dropout=0.5
         )
-
         self.bn7 = nn.BatchNorm2d(num_features=4096)
         self.relu7 = nn.ReLU()
+        # -----------------------#
+
         self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
         self.linear1000 = nn.Linear(
             in_features=4096,
@@ -356,9 +357,6 @@ class ResNet38(nn.Module):
         x = self.bn7(x)  # (b, 4096, 28, 28), (b, 4096, 28, 28)
         x = self.relu7(x)  # (b, 4096, 28, 28), (b, 4096, 28, 28)
 
-        # x = self.avgpool(x).view(x.size(0), -1)  # (b, 4096)
-        # x = self.linear1000(x)  # (b, 1000)
-
         return {
             'x1a': x1a,
 
@@ -385,3 +383,8 @@ class ResNet38(nn.Module):
 
             'x7a': x
         }
+
+    def forward(self, imgs):
+        x = self.extract_features(x=imgs)['x7a']  # (b, 4096, 28, 28)
+        x = self.avgpool(x).view(x.size(0), -1)  # (b, 4096)
+        return self.linear1000(x)  # (b, 1000)

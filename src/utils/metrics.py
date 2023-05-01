@@ -1,128 +1,104 @@
 import numpy as np
-import torch
+from torch import nn
 import torch.nn.functional as F
 
 
-class IoUAccuracy:
+class ClassificationEvaluator:
+    """
+                    Target
+                    0   1
+                0   TN  FN
+        Probs   1   FP  TP
+    """
     def __init__(self, num_classes=4, thresh=0.5, epsilon=1e-9):
         self.thresh = thresh
         self.num_classes = num_classes
         self.epsilon = epsilon
+        self.cms = [np.zeros(shape=(2, 2)) for _ in range(self.num_classes)]
 
-    def __call__(self, probs, y):
-        pred_labels = (probs >= self.thresh) * 1
-        correct_labels = (pred_labels == y) * 1
-        correct_1_labels = pred_labels * y
+    def reset_cms(self):
+        self.cms = [np.zeros(shape=(2, 2)) for _ in range(self.num_classes)]
 
+    def get_cms(self):
+        return self.cms
+
+    def update_cms(self, pred_labels, target):
+        for b in range(pred_labels.shape[0]):
+            for c in range(pred_labels.shape[1]):
+                self.cms[c][pred_labels[b, c], target[b, c]] += 1
+
+    def calc_accuracy(self, correct_1_labels, pred_labels, target):
         acc_intersection = correct_1_labels.sum(axis=1)
-        acc_union = y.sum(axis=1) + pred_labels.sum(axis=1) - acc_intersection
+        acc_union = target.sum(axis=1) + pred_labels.sum(axis=1) - acc_intersection
         acc = np.mean(a=(acc_intersection / acc_union))
+        return acc
 
-        em = np.mean(a=correct_labels.sum(axis=1) == self.num_classes)
-
+    def calc_class_accuracy(self, correct_1_labels, pred_labels, target):
         class_intersection = correct_1_labels.sum(axis=0)
-        class_union = y.sum(axis=0) + pred_labels.sum(axis=0) - class_intersection
+        class_union = target.sum(axis=0) + pred_labels.sum(axis=0) - class_intersection
         class_acc = class_intersection / (class_union + self.epsilon)
+        return class_acc
 
-        return {'accuracy': acc, 'exact_match': em, 'class_acc': class_acc}
+    def __call__(self, probs, target):
+        pred_labels = (probs > self.thresh).astype(np.uint8)
 
+        self.update_cms(pred_labels=pred_labels, target=target)
 
-class PseudoMaskEvaluator:
-    def __init__(self, num_classes, epsilon=1e-12):
-        self.num_classes = num_classes
-        self.epsilon = epsilon
-        self.confusion_matrix = np.zeros(shape=(self.num_classes, self.num_classes))
+        correct_1_labels = pred_labels * target
 
-    def add_batch(self, gt_mask, pred_mask):
-        gt_mask = gt_mask.flatten()
-        pred_mask = pred_mask.flatten()
-        self.confusion_matrix += self.get_confusion_matrix(gt_mask=gt_mask, pred_mask=pred_mask)
-
-    def reset(self):
-        self.confusion_matrix = np.zeros(shape=(self.num_classes, self.num_classes))
-
-    def get_confusion_matrix(self, gt_mask, pred_mask):  # (N, 224, 224)
-        mask = (gt_mask >= 0) & (gt_mask < self.num_classes)
-        label = (self.num_classes * gt_mask[mask].astype(np.uint8)) + pred_mask[mask]
-        count = np.bincount(label, minlength=self.num_classes ** 2)
-        confusion_matrix = count.reshape((self.num_classes, self.num_classes))
-        return confusion_matrix
-
-#     def get_class_scores(self, cm, target):
-#         class_cm = np.zeros(shape=(2, 2))
-#         TP = cm[target, target]
-#         FP = np.sum(a=cm[:, target]) - TP
-#         FN = np.sum(a=cm[target, :]) - TP
-#         TN = np.sum(a=cm) - (TP + FP + FN)
-#
-#         class_cm[0, 0] = TP
-#         class_cm[0, 1] = FN
-#         class_cm[1, 0] = FP
-#         class_cm[1, 1] = TN
-#
-#         precision = TP / (TP + FP + self.epsilon)  # PPV
-#         recall = TP / (TP + FN + self.epsilon)  # Sensitivity
-#
-#         class_scores = {
-#             'recall': recall,  # Sensitivity
-#             'specificity': TN / (TN + FP + self.epsilon),
-#             'precision': precision,  # PPV
-#             'npv': TN / (TN + FN + self.epsilon),
-#             'f1': (2 * precision * recall) / (precision + recall + self.epsilon),
-#             'iou': TP / (TP + FN + FP + self.epsilon),
-#             'accuracy': (TP + TN) / (TP + TN + FP + FN + self.epsilon)
-#         }
-#
-#         return class_scores
-
-    def get_scores(self):  # (b, 5, 224, 224)
-
-        diag = np.diag(v=self.confusion_matrix)
-        sum_0 = self.confusion_matrix.sum(axis=0)
-        sum_1 = self.confusion_matrix.sum(axis=1)
-
-        iou = diag / (sum_1 + sum_0 - diag)
-        freqs = sum_1 / self.confusion_matrix.sum()
-
-        res = {
-            'pa': diag.sum() / self.confusion_matrix.sum(),  # Pixel Accuracy
-            'ma': np.nanmean(a=(diag / sum_1)),  # Mean Accuracy / Pixel Accuracy Class
-            'iou': iou,  # Intersection Over Union
-            'miou': np.nanmean(a=iou),  # Mean IoU
-            'fwiou': (freqs[freqs > 0] * iou[freqs > 0]).sum(),  # FW IoU
-        }
-
-        return res
+        return (
+            # Accuracy
+            self.calc_accuracy(correct_1_labels=correct_1_labels, pred_labels=pred_labels, target=target),
+            # Exact Match
+            np.mean(a=(pred_labels == target).sum(axis=1) == self.num_classes),
+            # Class Accuracy
+            self.calc_class_accuracy(correct_1_labels=correct_1_labels, pred_labels=pred_labels, target=target),
+            # TE Confusion Matrix
+            self.cms[0],
+            # NEC Confusion Matrix
+            self.cms[1],
+            # LYM Confusion Matrix
+            self.cms[2],
+            # TAS Confusion Matrix
+            self.cms[3],
+        )
 
 
-class WeightedMultiLabelSoftMarginLoss():
-    def __init__(self, tw=1, nw=1):
-        super(WeightedMultiLabelSoftMarginLoss, self).__init__()
+class WMLSMLoss:
+    """
+    Weighted Multi-Label Soft Margin Loss
+    """
+    def __init__(self, tw, fw):
+        """
+
+        :param tw: true (1) weight
+        :param fw: false (0) weight
+        """
+        super(WMLSMLoss, self).__init__()
         self.tw = tw
-        self.nw = nw
+        self.fw = fw
 
-    def train_call(self, input, target):
+    def train_call(self, logits, target):
 
-        tmp = target.clone().detach()
+        true_loss = self.tw * target * F.logsigmoid(input=logits)
+        false_loss = self.fw * (1 - target) * F.logsigmoid(input=-logits)
 
-        if len(tmp.size()) == 1:
-            num_classes = tmp.size(0)
-            true_sum = (tmp == 1) * 1
-            false_sum = (target == 0) * 1
+        loss = -(true_loss + false_loss)
+
+        if target.ndim == 1:
+            return loss
+        elif target.ndim == 2:
+            return loss.sum(dim=0)
         else:
-            num_classes = tmp.size(1)
-            true_sum = (tmp == 1).sum(dim=0)
-            false_sum = (target == 0).sum(dim=0)
+            raise NotImplementedError('Not implemented yet')
 
-        true_weights = ((num_classes + 1) - true_sum) * self.tw
-        false_weights = ((num_classes + 1) - false_sum) * self.nw
+    def val_call(self, logits, target):
 
-        pos = target * F.logsigmoid(input) * true_weights
-        neg = (1 - target) * F.logsigmoid(-input) * false_weights
-        loss = -(pos + neg)
+        loss = -(target * F.logsigmoid(logits) + (1 - target) * F.logsigmoid(-logits))
 
-        return loss.mean(dim=0)
-
-    def val_call(self, input, target):
-        loss = -((target * F.logsigmoid(input)) + ((1 - target) * F.logsigmoid(-input)))
-        return loss.mean(dim=0)
+        if target.ndim == 1:
+            return loss
+        elif target.ndim == 2:
+            return loss.sum(dim=0)
+        else:
+            raise NotImplementedError('Not implemented yet')

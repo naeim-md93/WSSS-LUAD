@@ -127,3 +127,15 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Custom
+.idea
+checkpoints
+datasets
+init_weights
+sample
+create_sample.py
+sample_v3.py
+sample_VIT.py
+stage1_v3.py
+tmp.ipynb

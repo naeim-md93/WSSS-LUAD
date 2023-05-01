@@ -1,7 +1,7 @@
 import os
 
 
-def get_LUAD_HistoSeg_configs(root_path):
+def get_LUAD_HistoSeg_configs(dataset_path):
 
     cfgs = {}
 
@@ -10,7 +10,7 @@ def get_LUAD_HistoSeg_configs(root_path):
     cfgs['train']['images'] = {
         'dir_name': '',
         'num_items': 16678,
-        'path': os.path.join(root_path, 'train'),
+        'path': os.path.join(dataset_path, 'train'),
     }
 
     # Val Configurations
@@ -18,12 +18,12 @@ def get_LUAD_HistoSeg_configs(root_path):
     cfgs['val']['images'] = {
         'dir_name': 'img',
         'num_items': 300,
-        'path': os.path.join(root_path, 'val')
+        'path': os.path.join(dataset_path, 'val')
     }
     cfgs['val']['masks'] = {
         'dir_name': 'mask',
         'num_items': 300,
-        'path': os.path.join(root_path, 'val')
+        'path': os.path.join(dataset_path, 'val')
     }
 
     # Test Configurations
@@ -31,12 +31,12 @@ def get_LUAD_HistoSeg_configs(root_path):
     cfgs['test']['images'] = {
         'dir_name': 'img',
         'num_items': 307,
-        'path': os.path.join(root_path, 'test')
+        'path': os.path.join(dataset_path, 'test')
     }
     cfgs['test']['masks'] = {
         'dir_name': 'mask',
         'num_items': 307,
-        'path': os.path.join(root_path, 'test')
+        'path': os.path.join(dataset_path, 'test')
     }
 
     return cfgs
